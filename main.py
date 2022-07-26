@@ -1,5 +1,3 @@
-%matplotlib qt5
-
 from readlif.reader import LifFile, LifImage
 from PIL import Image, ImageFilter
 import matplotlib.pyplot as plt
