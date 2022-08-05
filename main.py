@@ -1,3 +1,4 @@
+from cgi import test
 from readlif.reader import LifFile, LifImage
 from PIL import Image, ImageFilter
 import matplotlib.pyplot as plt
@@ -9,22 +10,29 @@ from matplotlib import cm
 from scipy.spatial import distance
 import datatable as dt
 
+#main loading of the LIF data
+
+lif_file_name = 'data_in/090522_FAF_SAS_FRAP.lif' #data_in\090522_FAF_SAS_FRAP.lif
+lif_files = LifFile(f'./{lif_file_name}')
+imf_list = [i for i in lif_files.get_iter_image()]
+
 class dataLoader:
 
     def _getRuns(self, args):
         
         aranged_runs = {}
 
-        name_check = self.data[0].name.split(' ')[0].split('/')[0]
+        #name_check = self.data[0].name.split(' ')[0].split('/')[0]
+        name_check = self.data[0].name.split('/')[0]
         images_in_one_run = []
 
         for i in self.data:
-            current_img_name = i.name.split(' ')[0].split('/')[0]
+            current_img_name = i.name.split('/')[0]
             if current_img_name == name_check:
                 images_in_one_run.append(i)
             else:
                 aranged_runs[f'{name_check}'] = images_in_one_run
-                name_check = i.name.split(' ')[0].split('/')[0]
+                name_check = i.name.split('/')[0]
                 images_in_one_run = [i]
                 
             aranged_runs[f'{name_check}'] = images_in_one_run
@@ -74,24 +82,112 @@ class dataLoader:
                 index_bleached_frames.append(index)
             else:
                 pass
-        return (index_bleached_frames[0], index_bleached_frames[-1])
+        if index_bleached_frames:
+            results = (index_bleached_frames[0], index_bleached_frames[-1])
+        else:
+            results = (0, 0)
+        return results
 
-    def getParametersAll(self, name):
+    def getParametersAll(self, name=None):
+        if name == None:
+            parameter_dict = {}
+            for run_name in self.keys:
+                if len(self.getRunByName(run_name)) <= 1:
+                    continue
+                else:
+                    frame = self.getFrameInRun(run_name)[self.getBleachedFrames(run_name)[1]+1]
+                    try:
+                        parameter_dict[f'{run_name}'] = analysisInit(frame).params
+                    except:
+                        parameter_dict[f'{run_name}'] = 'Failed'
+#                parameter_dict[f'{run_name}'] = None
+                print(f'{run_name} ----> DONE')
+            return parameter_dict
+        else:
+            if len(self.getRunByName(run_name)) <= 1:
+                pass
+            else:
+                frame = self.getRunByName(name)[self.getBleachedFrames(name)[1]+1]
+                params = analysisInit(frame).params
+            return params
 
-        
+    def getMeanIntensity(self, parameters, name=None):
+        if name is None:
+            intensity_value_series = {}
+            for run_name in self.keys:
+                values_list = []
+                for index, frame in enumerate(self.getFrameInRun(run_name)):
+                    if index <= self.getBleachedFrames(run_name)[-1]:
+                        values_list.append(0)
+                    else:
+                        try:
+                            getter_init = FRAPAnalysis(frame, parameters[f'{run_name}'])
+                            values_list.append(getter_init.intensityAverageInner())
+                        except:
+                            values_list.append(0)
+                intensity_value_series[f'{run_name}'] = values_list
+                print(f'{run_name} ---> DONE')
+            return intensity_value_series
+        else:
+            values_list = []
+            for index, frame in enumerate(self.getFrameInRun(name)):
+                if index <= self.getBleachedFrames(name)[-1]:
+                    values_list.append(0)
+                else:
+                    getter_init = FRAPAnalysis(frame, parameters[f'{name}'])
+                    values_list.append(getter_init.intensityAverageInner())
 
-        
-        pass
-        
-        
+            return values_list
+
+class analysisInit:
+
+    def __mainContourGetter(self, image):
+        starting_contour_idx = mainShapeChooser(image).getMaxContour()
+        if starting_contour_idx is None:
+            starting_contour_idx = 0
+        else:
+            pass
+        return starting_contour_idx
 
 
+    def __init__(self, image):
+        self.var1 = MainShapeAnalyzer(image)
+        self.var1.setContourByIndex = self.__mainContourGetter(image)
+        self.var2 = SecondaryShapeAnalyzer(self.var1.displayMaskedImg(), image)
+        self.params = self.var2.parametersNormalazation()
 
-class FRAPAnalysis():
+    
 
-    def __init__(self):
-        pass
-        
+class mainShapeChooser:
+    
+    def __init__(self, image):
+        self.main_shape = MainShapeAnalyzer(image)
+        self.init_iamge = image
+
+    def detercCricles(self, image):
+        img1_array = image
+        detected_circles = cv.HoughCircles(img1_array, cv.HOUGH_GRADIENT, 2, 20)
+        if detected_circles is None:
+            return False
+        else:
+            return True
+
+    def getMaxContour(self):
+        contour_list = self.main_shape.ordered_contours
+        returned_index = None
+        for index, contour in enumerate(contour_list):
+            #self.main_shape.setContour(index)
+            self.main_shape.setContour = contour_list[index]
+            var1 = self.main_shape.displayMaskedImg()
+            var2 = SecondaryShapeAnalyzer(var1, self.init_iamge)
+            if self.detercCricles(var2.array) == False:
+                continue
+            else:
+                returned_index = index
+                break
+
+        return returned_index
+
 class MainShapeAnalyzer:
 
     kernel = np.ones((5,5), np.uint8)
@@ -104,11 +200,46 @@ class MainShapeAnalyzer:
         self.filter_bilat = cv.bilateralFilter(self.filter_erode, 9, 50, 50)
         _, self.binary = cv.threshold(self.filter_bilat, 60, 255, cv.THRESH_BINARY)
         self.contours, self.heirarchy = cv.findContours(self.binary, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
+        self.ordered_contours = sorted(self.contours, key=lambda item: cv.contourArea(item), reverse=True)
+        self.num_ordered_contours = len(self.ordered_contours)
+        self.__set_contour = 0
 
     
     def mainContour(self):
-        max_contour = max(self.contours, key=lambda item: cv.contourArea(item))
+        
+        given_contour_list = self.__set_contour
+
+        if type(given_contour_list) == int:
+            max_contour = max(self.contours, key=lambda item: cv.contourArea(item))
+        else:
+            if type(given_contour_list) == tuple:
+                max_contour = max(given_contour_list)
+            else:
+                max_contour = given_contour_list
         return max_contour
+
+    @property
+    def setContour(self):
+        return self.__set_contour
+    @setContour.setter
+    def setContour(self, contour):
+        self.__set_contour = contour
+
+    @property
+    def setContourByIndex(self):
+        return self.__set_contour
+    
+    @setContourByIndex.setter
+    def setContourByIndex(self, contour_index):
+        self.__set_contour = self.ordered_contours[contour_index]
+
+
+    def listContours(self):
+        return [cv.contourArea(controur) for controur in self.contours]
+
+    def listContoursOrd(self):
+        return [cv.contourArea(controur) for controur in self.ordered_contours]
+
     
     def disaplyContourImg(self, filled=True):
         im_copy = self.array.copy()
@@ -162,9 +293,10 @@ class SecondaryShapeAnalyzer:
         self.onesCopy = np.ones_like(self.array)
         self.filter_erode = cv.erode(self.array, kernel, iterations=1)
         self.filter_bilat = cv.bilateralFilter(self.filter_erode, 9, 50, 50)
-        _, self.binary = cv.threshold(self.filter_bilat, 75, 255, cv.THRESH_BINARY_INV)
+        _, self.binary = cv.threshold(self.filter_bilat, 100, 255, cv.THRESH_BINARY_INV)
         self.contours, self.heirarchy = cv.findContours(self.binary, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
         self.main_mask = MainShapeAnalyzer(primay_iamge).displayMainMask()
+        self.primary_image = np.array(primay_iamge)
         self.mininal_normalazation_value = kwargs.get('norm_min')
         self.mean_background_value = kwargs.get('norm_mean')
 
@@ -196,10 +328,10 @@ class SecondaryShapeAnalyzer:
     def coordinatesMaskArea(self):
         img_mask_b = cv.drawContours(self.onesCopy, [self.mainContour()], -1, 255, cv.FILLED)
         main_area_coordinates = np.where(img_mask_b == 255)
-        return main_area_coordinates
+        return img_mask_b
 
     def coordiantedComplimentMask(self):
-        compliment_mask = self.main_mask
+        compliment_mask = np.array(self.main_mask).copy()
         compliment_mask[self.coordinatesMaskArea()] = 0
         return compliment_mask
 
@@ -224,11 +356,15 @@ class SecondaryShapeAnalyzer:
 
     def imageNormalization(self):
         outside_intensity = self.intensityValueBackground()
+        #print(outside_intensity)
         minimal_instide_intensity = self.intensityValueMinInner()
-        eq_normalazation = lambda intensity: round(((intensity-minimal_instide_intensity)/(outside_intensity-minimal_instide_intensity)),2)
-        img_normalized_concentration = np.vectorize(eq_normalazation)
-        output = img_normalized_concentration(self.array)
-        return output
+        #print(minimal_instide_intensity)
+        #eq_normalazation = lambda intensity: round(((intensity-minimal_instide_intensity)/(outside_intensity-minimal_instide_intensity)),2)
+        #img_normalized_concentration = np.vectorize(eq_normalazation)
+        #output = img_normalized_concentration(self.array)
+        constant = np.subtract(outside_intensity, minimal_instide_intensity)
+        variable = np.subtract(self.primary_image, minimal_instide_intensity)
+        return np.divide(variable, constant)
 
     def valueRadiusHW(self):
         normal_img = self.imageNormalization()
@@ -244,8 +380,63 @@ class SecondaryShapeAnalyzer:
 
     def parametersNormalazation(self):
         parameters_dict = {
-            'min_norm' : self.intensityValueMinInner(),
-            'mean_norm' : self.intensityValueBackground(),
-            'roi_radius' : self.valueRadiusHW()
+            'min_norm' : float(self.intensityValueMinInner()),
+            'mean_norm' : float(self.intensityValueBackground()),
+            'roi_radius' : float(self.valueRadiusHW())
         }
         return parameters_dict
+        
+
+class FRAPAnalysis(SecondaryShapeAnalyzer):
+
+    def _loadFrame(self, frame):
+        main_shape_init = MainShapeAnalyzer(frame).displayMaskedImg()
+        inner_shape_init = SecondaryShapeAnalyzer(main_shape_init, frame)
+        return inner_shape_init
+
+    def _defineROI(self, frame):
+        ones_arry = np.ones_like(frame)
+        mask_known_radius = cv.circle(ones_arry, self.center, self.roi_radius, 255, cv.FILLED)
+        return cv.bitwise_and(self.array, self.array, mask=mask_known_radius)
+
+
+    def __init__(self, frame, parameters):
+        self.array = np.array(frame)
+        self.min = np.ones_like(self.array)*parameters['min_norm']
+        self.mean = np.ones_like(self.array)*parameters['mean_norm']
+        self.roi_radius = parameters['roi_radius']
+        self.load_frame = self._loadFrame(frame)
+        self.center = self.load_frame.getCentroid()
+        self.roi_definition = self._defineROI(frame)
+
+
+    def normalizationSimple(self):
+        constant = np.subtract(self.mean, self.min)
+        variable = np.subtract(self.array, self.min)
+        return np.divide(variable, constant)
+        
+
+
+    def parametrizedNormal(self):
+
+        eq_normalazation = lambda intensity: round(((intensity-self.min)/(self.mean-self.min)),2)
+        img_normalized_concentration = np.vectorize(eq_normalazation)
+        output = img_normalized_concentration(self.array)
+        return output
+
+
+    def intensityAverageInner(self):
+        mask_known_radius = cv.circle(self.load_frame.onesCopy, self.center, self.roi_radius, 255, cv.FILLED)
+        intensity_mean_values = np.mean(self.normalizationSimple()[np.where(mask_known_radius == 255)])
+        return intensity_mean_values               
+
+        
+class helper_functions:
+
+    def __init__(self, main, secondary):
+        self.main = MainShapeAnalyzer(main)
+        self.secondary = SecondaryShapeAnalyzer(self.main, main)
+
+
+if __name__ == '__main__':
+    print('hello')
