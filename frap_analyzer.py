@@ -1,5 +1,7 @@
 from cProfile import label
 from cgi import test
+from logging.handlers import RotatingFileHandler
+from tabnanny import check
 from readlif.reader import LifFile, LifImage
 from PIL import Image, ImageFilter
 import matplotlib.pyplot as plt
@@ -11,12 +13,11 @@ from matplotlib import cm
 from scipy.spatial import distance
 #import datatable as dt
 from sklearn.mixture import BayesianGaussianMixture
+import pickle
 
 #main loading of the LIF data
 
-lif_file_name = 'data_in/090522_FAF_SAS_FRAP.lif' #data_in\090522_FAF_SAS_FRAP.lif
-lif_files = LifFile(f'./{lif_file_name}')
-imf_list = [i for i in lif_files.get_iter_image()]
+
 
 class dataLoader:
 
@@ -49,7 +50,7 @@ class dataLoader:
         self.keys = list(self.runs.keys())
 
     def getRunByName(self, name):
-        print(name)
+        #print('i am here')
         return self.runs[name]
 
     def getFrameInRun(self, name):
@@ -141,12 +142,37 @@ class dataLoader:
             return intensity_value_series
         else:
             values_list = []
-            for index, frame in enumerate(self.getFrameInRun(name)):
+            frames = self.getFrameInRun(name)
+            counter = 0
+            size = (256,256)
+            file_name = name.replace(' ','_')
+            
+            #out_vid = cv.VideoWriter(f'data_out/{file_name}.mp4', cv.VideoWriter_fourcc(*'mp4v'), 30, size)
+
+            for index, frame in enumerate(frames):
+            
+                counter = index
                 if index <= self.getBleachedFrames(name)[-1]:
                     values_list.append(0)
                 else:
-                    getter_init = FRAPAnalysis(frame, parameters[f'{name}'])
-                    values_list.append(getter_init.intensityAverageInner())
+                    #print('check1')
+                        try:
+                            getter_init = FRAPAnalysis(frame, parameters[f'{name}'])
+                        #print('chekc2')
+                            values_list.append(getter_init.intensityAverageInner())
+                            #print(values_list[-1])
+                            #img_converted = cv.cvtColor(getter_init.load_frame.displayContourOriginal(), cv.COLOR_GRAY2BGR)
+                            #out_vid.write(img_converted)
+                            #plt.imshow(getter_init.load_frame.displayContourOriginal())
+                            #plt.show()
+                        except:
+                            values_list.append(0)
+                            #img_converted = cv.cvtColor(np.array(frame), cv.COLOR_GRAY2BGR)
+                        #out_vid.write(img_converted)
+
+                #print(f'{counter}/{len(frames)}----> done')    
+            
+            #out_vid.release()
 
             return values_list
 
@@ -208,7 +234,7 @@ class MainShapeAnalyzer:
         data_preped = data[data > lower_cutoff]
         data_preped = data_preped.reshape(-1, 1)
 
-        print('checkpoint 1')
+        #print('checkpoint 1')
 
         bgm = BayesianGaussianMixture(n_components=2, covariance_type='full', random_state=42).fit(data_preped)
         gmm_labels = bgm.predict(data.reshape(-1, 1))
@@ -235,17 +261,65 @@ class MainShapeAnalyzer:
 
         labels_formated = lables.astype('uint8')
 
-        return labels_formated 
+        return labels_formated, bgm
 
-    def __init__(self, image):
+    def _myGausFromModel(self, image, model):
+        data = image.ravel()
+        gmm_labels = model.predict(data.reshape(-1,1))
+        lables = gmm_labels.reshape(image.shape[0], image.shape[1])
+
+        coords_g1 = np.where(lables == 0)
+        coords_g2 = np.where(lables == 1)        
+
+        if self.img_type == 1:
+            
+            if np.mean(self.array[coords_g1]) > 100:
+                lables[coords_g1] = 0
+                lables[coords_g2] = 255
+
+            else:
+                lables[coords_g1] = 255
+                lables[coords_g2] = 0
+
+            labels_formated = lables.astype('uint8')
+
+            return labels_formated
+        else:
+            if np.mean(self.array[coords_g1]) > 100:
+                lables[coords_g1] = 255
+                lables[coords_g2] = 0
+
+            else:
+                lables[coords_g1] = 0
+                lables[coords_g2] = 255
+
+            labels_formated = lables.astype('uint8')
+
+            return labels_formated
+
+
+    def _getType(self):
+        if np.mean(self.array) > 100:
+            return 1
+        else:
+            return 0
+    
+
+    def __init__(self, image, model=None):
         kernel = np.ones((5,5), np.uint8)
         self.array = np.array(image)
+        self.img_type = self._getType()
         self.onesCopy = np.zeros_like(self.array)
         self.filter_erode = cv.erode(self.array, kernel, iterations=1)
         self.filter_bilat = cv.bilateralFilter(self.filter_erode, 9, 50, 50)
         #_, self.binary = cv.threshold(self.filter_bilat, 60, 255, cv.THRESH_BINARY)
         #self.binary = cv.adaptiveThreshold(self.filter_bilat, 100, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, 7, 0)
-        self.binary = self._myGausThresModel(self.filter_bilat, 10)
+        
+        if model is None:
+            self.binary, self.model = self._myGausThresModel(self.filter_bilat, 10)
+        else:
+            self.binary = self._myGausFromModel(self.filter_bilat, model)
+
         self.contours, self.heirarchy = cv.findContours(self.binary, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
         self.ordered_contours = sorted(self.contours, key=lambda item: cv.contourArea(item), reverse=True)
         self.num_ordered_contours = len(self.ordered_contours)
@@ -307,7 +381,7 @@ class MainShapeAnalyzer:
     def displayMaskedImg(self):
         img_mask_b = cv.drawContours(self.onesCopy, [self.mainContour()], -1, 255, cv.FILLED)
         img_mask_g = cv.bitwise_and(self.array, self.array, mask=img_mask_b)
-        img_mask_g[self.coordinatesInverseMaskedArea()] = np.mean(self.array[self.coordiatesMaskedArea()])
+        img_mask_g[self.coordinatesInverseMaskedArea()] = np.max(self.array[self.coordiatesMaskedArea()])
         return img_mask_g
 
     def displayMaskedImgProper(self):
@@ -334,40 +408,80 @@ class MainShapeAnalyzer:
 
 class SecondaryShapeAnalyzer:
 
-    def _myGausThresModel(self, image, lower_cutoff):
-        data = image.ravel()
-        data_preped = data[data > lower_cutoff]
-        data_preped = data_preped.reshape(-1, 1)
+    # def _myGausThresModel(self, image, lower_cutoff):
+    #     data = image.ravel()
+    #     data_preped = data[data > lower_cutoff]
+    #     data_preped = data_preped.reshape(-1, 1)
 
-        bgm = BayesianGaussianMixture(n_components=2, covariance_type='spherical', random_state=42).fit(data_preped)
-        gmm_labels = bgm.predict(data.reshape(-1, 1))
-        lables = gmm_labels.reshape(image.shape[0], image.shape[1])
+    #     bgm = BayesianGaussianMixture(n_components=2, covariance_type='spherical', random_state=42, max_iter=200).fit(data_preped)
+    #     gmm_labels = bgm.predict(data.reshape(-1, 1))
+    #     lables = gmm_labels.reshape(image.shape[0], image.shape[1])
 
-        coords_g1 = np.where(lables == 0)
-        coords_g2 = np.where(lables == 1)        
+    #     coords_g1 = np.where(lables == 0)
+    #     coords_g2 = np.where(lables == 1)        
 
-        if np.mean(self.array[coords_g1]) > 100:
-            lables[coords_g1] = 0
-            lables[coords_g2] = 255
+    #     if np.mean(self.array[coords_g1]) > 100:
+    #         print('here')
+    #         lables[coords_g1] = 0
+    #         lables[coords_g2] = 255
 
-        else:
-            lables[coords_g1] = 255
-            lables[coords_g2] = 0
+    #     else:
+    #         lables[coords_g1] = 255
+    #         lables[coords_g2] = 0
 
-        labels_formated = lables.astype('uint8')
+    #     labels_formated = lables.astype('uint8')
 
-        return labels_formated
+    #     return labels_formated, bgm
+
+    # def _myGausFromModel(self, image, model):
+    #     data = image.ravel()
+    #     gmm_labels = model.predict(data.reshape(-1,1))
+    #     lables = gmm_labels.reshape(image.shape[0], image.shape[1])
+
+    #     coords_g1 = np.where(lables == 0)
+    #     coords_g2 = np.where(lables == 1)        
+
+    #     if np.mean(self.array[coords_g1]) > 100:
+    #         lables[coords_g1] = 0
+    #         lables[coords_g2] = 255
+
+    #     else:
+    #         lables[coords_g1] = 255
+    #         lables[coords_g2] = 0
+
+    #     labels_formated = lables.astype('uint8')
+
+    #     return labels_formated
+
+    def _mainShapeMinValue(self):
+        
+        intensity_value = np.min(self.array[np.where(self.main_mask == 255)])
+
+        return int(intensity_value)
+
+    def _mainShapeMaxValue(self):
+        
+        intensity_value = np.max(self.array[np.where(self.main_mask == 255)])
+
+        return int(intensity_value)
+
     
-    def __init__(self, image, primay_iamge, **kwargs):
+    def __init__(self, image, primay_iamge, model=None, **kwargs):
         kernel = np.ones((5,5), np.uint8)
         self.array = np.array(image)
         self.onesCopy = np.ones_like(self.array)
-        self.filter_erode = cv.erode(self.array, kernel, iterations=1)
+        self.main_mask = MainShapeAnalyzer(primay_iamge).displayMainMask()
+        self.filter_erode = cv.erode(self.array, kernel, iterations=2)
         self.filter_bilat = cv.bilateralFilter(self.filter_erode, 9, 50, 50)
-        #_, self.binary = cv.threshold(self.filter_bilat, 100, 255, cv.THRESH_BINARY_INV)
-        self.binary = self._myGausThresModel(self.filter_bilat, 15)
+        _, self.binary = cv.threshold(self.filter_bilat, int(self._mainShapeMaxValue()*0.1+self._mainShapeMinValue()), 255, cv.THRESH_BINARY_INV)
+        # if model is None:
+        #     self.binary, self.model = self._myGausThresModel(self.filter_bilat, 10)
+        # else:
+        #     self.binary = self._myGausFromModel(self.filter_bilat, model)
+
         self.contours, self.heirarchy = cv.findContours(self.binary, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
         self.main_mask = MainShapeAnalyzer(primay_iamge).displayMainMask()
+        self.main_model = MainShapeAnalyzer(primay_iamge).model
         self.primary_image = np.array(primay_iamge)
         self.mininal_normalazation_value = kwargs.get('norm_min')
         self.mean_background_value = kwargs.get('norm_mean')
@@ -382,6 +496,11 @@ class SecondaryShapeAnalyzer:
             cv.drawContours(im_copy, [self.mainContour()], -1, 255, cv.FILLED)
         else:
             cv.drawContours(im_copy, [self.mainContour()], -1, 255, 1)
+        return im_copy
+
+    def displayContourOriginal(self):
+        im_copy = self.primary_image.copy()
+        cv.drawContours(im_copy, [self.mainContour()], -1, 255, 1)
         return im_copy
 
     def getCentroid(self):  #get centroid of the shape defined by the mainContour contour
@@ -413,7 +532,8 @@ class SecondaryShapeAnalyzer:
             intensity_value = np.mean(self.array[np.where(self.coordiantedComplimentMask() == 255)])
         else:
             intensity_value = self.mean_background_value
-        return round(intensity_value)
+        return int(intensity_value)
+    
     
     def imageMaskInner(self):
         img_mask = cv.drawContours(self.onesCopy, [self.mainContour()], -1, 255, cv.FILLED)
@@ -425,6 +545,8 @@ class SecondaryShapeAnalyzer:
         else:
             intensity_value = self.mininal_normalazation_value
         return intensity_value
+
+    
 
     def imageNormalization(self):
         outside_intensity = self.intensityValueBackground()
@@ -454,16 +576,18 @@ class SecondaryShapeAnalyzer:
         parameters_dict = {
             'min_norm' : float(self.intensityValueMinInner()),
             'mean_norm' : float(self.intensityValueBackground()),
-            'roi_radius' : float(self.valueRadiusHW())
+            'roi_radius' : float(self.valueRadiusHW()),
+            #'gaus_mix_model_second' : self.model,
+            'gaus_mix_model_main' : self.main_model
         }
         return parameters_dict
         
 
 class FRAPAnalysis(SecondaryShapeAnalyzer):
 
-    def _loadFrame(self, frame):
-        main_shape_init = MainShapeAnalyzer(frame).displayMaskedImg()
-        inner_shape_init = SecondaryShapeAnalyzer(main_shape_init, frame)
+    def _loadFrame(self, frame, parameters):
+        main_shape_init = MainShapeAnalyzer(frame, model=parameters['gaus_mix_model_main']).displayMaskedImg()  #  model=parameters['gaus_mix_model_main'] took out
+        inner_shape_init = SecondaryShapeAnalyzer(main_shape_init, frame)  #model = parameters['gaus_mix_model_second'] took out 
         return inner_shape_init
 
     def _defineROI(self, frame):
@@ -478,9 +602,10 @@ class FRAPAnalysis(SecondaryShapeAnalyzer):
         self.min = np.ones_like(self.array)*parameters['min_norm']
         self.mean = np.ones_like(self.array)*parameters['mean_norm']
         self.roi_radius = parameters['roi_radius']
-        self.load_frame = self._loadFrame(frame)
+        self.load_frame = self._loadFrame(frame, parameters)
         self.center = self.load_frame.getCentroid()
         self.roi_definition = self._defineROI(frame)
+        #self.model = parameters['gaus_mix_model']
 
 
     def normalizationSimple(self):
@@ -502,7 +627,13 @@ class FRAPAnalysis(SecondaryShapeAnalyzer):
         radius = int(self.roi_radius)
         mask_known_radius = cv.circle(self.load_frame.onesCopy, self.center, radius, 255, cv.FILLED)
         intensity_mean_values = np.mean(self.normalizationSimple()[np.where(mask_known_radius == 255)])
-        return intensity_mean_values               
+        return intensity_mean_values   
+
+    def intensityAreaCheck(self):
+        radius = int(self.roi_radius)
+        mask_known_radius = cv.circle(self.load_frame.onesCopy, self.center, radius, 255, cv.FILLED)
+        return mask_known_radius
+
 
         
 class helper_functions:
