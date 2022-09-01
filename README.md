@@ -1,5 +1,5 @@
 # FRAPAnalyzer
-A script for analyzing LIF Files of FRAP experiment with moving target. The code is bad but it works!
+A script for analyzing LIF Files of FRAP experiment with moving target. The code is meh but it works!
 
 The main equations for the fitting of the intensity profile and the intenisty normalization approach is taken from the work of Taylor et al. [1]
 
