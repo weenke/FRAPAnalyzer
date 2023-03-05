@@ -131,7 +131,7 @@ plt.show()
 
 
     
-![png](output_7_0.png)
+![png](examples/output_7_0.png)
     
 
 
@@ -175,31 +175,31 @@ print(f'<I> for prebleachned infinte phase = {round(mean_bg, 2)} AU')
 
 
     
-![png](output_11_0.png)
+![png](examples/output_11_0.png)
     
 
 
 
     
-![png](output_11_1.png)
+![png](examples/output_11_1.png)
     
 
 
 
     
-![png](output_11_2.png)
+![png](examples/output_11_2.png)
     
 
 
 
     
-![png](output_11_3.png)
+![png](examples/output_11_3.png)
     
 
 
 
     
-![png](output_11_4.png)
+![png](examples/output_11_4.png)
     
 
 
@@ -216,7 +216,7 @@ plt.show()
 
 
     
-![png](output_12_0.png)
+![png](examples/output_12_0.png)
     
 
 
@@ -265,7 +265,7 @@ plt.show()
 
 
     
-![png](output_18_0.png)
+![png](examples/output_18_0.png)
     
 
 
@@ -331,7 +331,7 @@ plt.show()
 
 
     
-![png](output_23_0.png)
+![png](examples/output_23_0.png)
     
 
 
@@ -367,7 +367,7 @@ plt.show()
 
 
     
-![png](output_28_0.png)
+![png](examples/output_28_0.png)
     
 
 
